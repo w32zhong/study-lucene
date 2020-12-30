@@ -1,6 +1,8 @@
 ## Study Lucene
-This repo shows how to successfully build and run Lucene versions from `v1.9` to later than `v3.4`.
-The purpose of this repo is to let myself get hand dirty when learning Lucene source code.
+This repo shows how to successfully build and run Lucene versions from [v1.9](https://archive.apache.org/dist/lucene/java) to [v2.9.4](https://lucene.apache.org/core/2_9_4/fileformats.html) and all the way to [v3.4](https://kandepet.com/dissecting-lucene-the-index-format).
+The purpose of this repo is to let myself get hands dirty and to be able to actually run old code to gain a good sense in Lucene source code.
+
+Although I fail to build earlier versions before v1.9, I find it helpful (with the help of `gitk`) to study Lucene source code by walking through history. The earliest point I suggest to start reading is the first time Doug Cutting shows up in commit history (b08e28c3838e7bcab1a198e2f6d0cef687ee50e3).
 
 ### Setup (Use `v1.9` as Example)
 1. Clone lucene-solr:
