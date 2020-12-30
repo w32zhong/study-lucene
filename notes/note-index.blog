@@ -1,0 +1,375 @@
+	tag:工作篇
+<h3>Notes on Reading old Lucene-solr Source Code (version b08e28c3838)</h3>
+
+<h4>1. Demo Skeleton</h4>
+The demo begins at [key]src/demo/org/apache/lucene/IndexFiles.java[/key]
+[code]
+demo() {
+  IndexWriter writer = new IndexWriter("index", new StopAnalyzer());
+  writer.addDocument(FileDocument.Document(file));
+}
+[/code]
+where FileDocument.Document() at [key]./src/demo/org/apache/lucene/FileDocument.java[/key] will convert a file object to FileDocument object which contains <i>path</i>, <i>contents</i> and <i>last_modified</i> three Documents in this demo.
+
+Document is nothing but a DocumentFieldList type where in this case it has:
+[diagram]
+graph TD
+  FileDocument.Document -->|return| doc
+  doc -->|has| path
+  doc -->|has| last_modified
+  doc -->|has| contents
+
+  path -->|of| Field.Text
+  last_modified -->|of| Field.Keyword
+  contents -->|of| Field.Text
+
+  Field.Text --> store
+  Field.Text --> index
+  Field.Text --> token
+
+  Field.Keyword --> store
+  Field.Keyword --> index
+
+  Field.unIndexed --> store
+
+  Field.UnStored --> index
+  Field.UnStored --> token
+[/diagram]
+
+So the remaining is just about IndexWriter whose class looks like
+[code]
+class IndexWriter {
+  Directory directory;
+  final Directory ramDirectory = new RAMDirectory();
+
+  Analyzer analyzer;
+
+  SegmentInfos segmentInfos = new SegmentInfos();
+
+  ...
+}
+[/code]
+Directory is a class for common file/directory manipulations. Analyzer is using StopAnalyzer which internally uses StopFilter and LowerCaseTokenizer to filter stopwords, tokenize/split by non-letters and convert tokens to lowercase.
+
+SegmentInfos are a Vector of SegmentInfo (containing a counter to count its elements dynamically):
+[code]
+class SegmentInfo {
+  String name;
+  int docCount;
+  Directory dir;
+}
+[/code]
+and SegmentInfos are initially empty.
+
+After constructing IndexWriter, it calls [key]writer.addDocument()[/key] to write segment files ([key]_{segment_counter}.xxx[/key]). This routine is the core index function we are going to dive into:
+[code]
+IndexWriter::addDocument(Document doc) {
+  DocumentWriter dw = DocumentWriter(ramDirectory, analyzer);
+  String segmentName = "_" + segmentInfos.counter++;
+  dw.addDocument(segmentName, doc);
+
+  /* each addDocument() we will create a new segment (in memory)
+   * with a single document (docCount=1) and whether to merge it
+   * with existing segments will depend on maybeMergeSegments() */
+  IndexWriter::segmentInfos.addElement(
+    SegmentInfo(
+      segmentName, 1, ramDirectory
+    )
+  );
+  maybeMergeSegments();
+}
+[/code]
+
+<h4>2. Inverted Index</h4>
+DocumentWriter::addDocument mainly constructs inverted index segments.
+
+DocumentWriter and its addDocument() looks like this
+[code]
+class DocumentWriter {
+  Directory directory;
+  Analyzer analyzer;
+
+  FieldInfos fieldInfos;
+  Hashtable postingTable = new Hashtable();
+  int[] fieldLengths;
+  ...
+}
+
+DocumentWriter::addDocument(String segment, Document doc) {
+  // write field names
+  fieldInfos = new FieldInfos();
+  fieldInfos.add(doc);
+  fieldInfos.write(directory, segment + ".fnm");
+
+  // write field values
+  FieldsWriter fieldsWriter =
+    new FieldsWriter(directory, segment, fieldInfos);
+  fieldsWriter.addDocument(doc);
+
+  // invert doc into postingTable
+  postingTable.clear();
+  fieldLengths = new int[fieldInfos.size()];
+  invertDocument(doc);
+
+  Posting[] postings = sortPostingTable();
+
+  /*
+  for (int i = 0; i < postings.length; i++) {
+    Posting posting = postings[i];
+    System.out.print(posting.term);
+    System.out.print(" freq=" + posting.freq);
+    System.out.print(" pos=");
+    System.out.print(posting.positions[0]);
+    for (int j = 1; j < posting.freq; j++)
+      System.out.print("," + posting.positions[j]);
+    System.out.println("");
+  }
+  */
+
+  // write postings
+  writePostings(postings, segment);
+
+  // write doc length normalizer
+  writeNorms(doc, segment);
+}
+[/code]
+where DocumentWriter::addDocument first write fieldInfos (field names) into [key].fnm[/key] files:
+[diagram]
+graph TD
+  FieldInfos -->|has| byNumber("Vector byNumber")
+  FieldInfos -->|has| byName("Hashtable byName")
+  FieldInfos -->|method| add_doc("add(doc): for each f in doc.fields(),<br/> add into byNumber, byName")
+  FieldInfos -->|method| write_d_name("write(Directory d, String fname): <br/> it uses OutputStream to write FieldInfo(s)")
+
+  byNumber -->|Vector_of| FieldInfo
+  byName -->|Hashtable_of| FieldInfo
+
+  FieldInfo -->|has| name
+  FieldInfo -->|has| isIndexed
+  FieldInfo -->|has| number("number (the index of a field itself in document)")
+[/diagram]
+
+And then it uses FieldsWriter to write field values to two files: [key].fdt[/key] and [key].fdx[/key]
+[code]
+class FieldsWriter {
+  FieldInfos fieldInfos;
+  OutputStream fieldsStream;
+  OutputStream indexStream;
+
+  FieldsWriter(Directory d, String segment, FieldInfos fn) {
+    fieldInfos = fn;
+    fieldsStream = d.createFile(segment + ".fdt");
+    indexStream = d.createFile(segment + ".fdx");
+  }
+
+  addDocument(Document doc) {
+    /* getFilePointer is just getting current file pointer offset */
+    indexStream.writeLong(fieldsStream.getFilePointer());
+
+    Enumeration fields  = doc.fields();
+
+    int storedCount = number of stored field in fields;
+    fieldsStream.writeVInt(storedCount);
+
+    for field in fields {
+      if (field.isStored()) {
+        fieldsStream.writeVInt(fieldInfos.fieldNumber(field.name()));
+        fieldsStream.writeByte((Boolean)field.isTokenized());
+        fieldsStream.writeString(field.stringValue());
+      }
+    }
+  }
+}
+[/code]
+from its addDocument() function we can see [key].fdx[/key] is just a pointer file points to an offset in [key].fdt[/key], the latter has every "isStored" field name number/index, whether it is tokenized field and corresponding field value indexed.
+
+Now let's turn to [key]postings[/key] and look how it is constructed (note that postingTable is merely a Hashtable for <i>terms</i>):
+[code]
+postingTable.clear();
+fieldLengths = new int[fieldInfos.size()];
+invertDocument(doc);
+
+Posting[] postings = sortPostingTable();
+[/code]
+where invertDocument() "inverts" token in each field to postingTable:
+[code]
+/* A Term represents a word from text, it is the unit of search. */
+class Term {
+  String field; /* the field that the word occured in */
+  String text;
+  ...
+}
+
+DocumentWriter::invertDocument(Document doc) {
+  Enumeration fields  = doc.fields();
+  for each field in fields {
+    String fieldName = field.name();
+    int fieldNumber = fieldInfos.fieldNumber(fieldName);
+    int position = fieldLengths[fieldNumber];
+
+    if (field.isIndexed()) {
+      if (!field.isTokenized()) { // un-tokenized field
+        addPosition(fieldName, field.stringValue(), position++);
+      } else {
+        Reader reader = new StringReader(field.stringValue());
+        TokenStream stream = analyzer.tokenStream(fieldName, reader);
+        for (Token tok in stream) {
+          addPosition(fieldName, tok, position++);
+        }
+      }
+
+      fieldLengths[fieldNumber] = position; // save field length
+    }
+  }
+}
+
+DocumentWriter::addPosition(String field, String text, int position){
+    Posting ti = (Posting)postingTable.get(Term(field, text));
+    if (ti != null) { // word seen before
+      int freq = ti.freq;
+      ti.positions[freq] = position;  // append new position
+      ti.freq = freq + 1;  // update frequency
+    }
+    else {// word not seen before
+      Term term = new Term(field, text);
+      postingTable.put(term, new Posting(term, position));
+    }
+}
+[/code]
+and Posting is a "micro" inverted list for this document
+[code]
+class Posting {
+  Term term;
+  int freq = 1;
+  int[] positions;
+}
+[/code]
+Later, sortPostingTable() is called. It is just a function to copy postings from postingTable (a hash table) into an array of type "Posting[] array" and sort the array by term (field name, text). The code is omitted here.
+
+<h4>3. Dictionary and Posting Lists</h4>
+Finally, we have the remaining piece of code to flush posting array to disk segment files [key]*.frq[/key] and [key]*.prx[/key] for term frequencies and positions/proximity respectively:
+[code]
+DocumentWriter::addDocument(String segment, Document doc) {
+  ...
+
+  Posting[] postings = sortPostingTable();
+
+  // write postings
+  writePostings(postings, segment);
+
+  // write norms of indexed fields
+  writeNorms(doc, segment);
+}
+[/code]
+where writePostings() and writeNorms() looks like
+[code]
+class TermInfo { /* inverted list entry */
+  int docFreq = 0;
+  long freqPointer = 0;
+  long proxPointer = 0;
+}
+
+class TermInfosWriter {
+  FieldInfos fieldInfos;
+  OutputStream output;
+  int size = 0;
+  last* = some initial last values
+
+  TermInfosWriter(Directory directory, String segment,
+                  FieldInfos fis) {
+    initialize(directory, segment, fis, false);
+    other = initialize(directory, segment, fis, true);
+    other.other = this;
+  }
+
+  initialize(Directory directory, String segment,
+             FieldInfos fis, boolean isIndex) {
+    fieldInfos = fis;
+    output = directory.createFile(
+      segment + (isIndex ? ".tii" : ".tis")
+      // tis: Term Infos file
+      // tii: Term Info Index
+    );
+    output.writeInt(0); // leave space for size
+  }
+
+  void add(Term term, TermInfo ti) {
+    if (!isIndex && size % INDEX_INTERVAL == 0)
+      other.add(lastTerm, lastTi);
+
+    /* add to a dictionary */
+    int start = first diff char index of (lastTerm.text, term.text)
+    int length = term.text.length() - start;
+
+    output.writeVInt(start); // write shared prefix length
+    output.writeVInt(length); // write delta length
+    output.writeChars(term.text, start, length); // wr delta chars
+    output.writeVInt(fieldInfos.fieldNumber(term.field));
+
+    output.writeVInt(ti.docFreq);  // write doc freq
+    // freq file pointer
+    output.writeVLong(ti.freqPointer - lastTi.freqPointer);
+    // position file pointer
+    output.writeVLong(ti.proxPointer - lastTi.proxPointer);
+
+    if (isIndex) {
+      output.writeVLong(
+        other.output.getFilePointer() - lastIndexPointer
+      );
+      lastIndexPointer = other.output.getFilePointer();
+    }
+
+    lastTi.set(ti);
+    size++;
+  }
+}
+
+DocumentWriter::writePostings(Posting[] postings, String segment) {
+  OutputStream freq = null, prox = null;
+  TermInfosWriter tis = null;
+
+  freq = directory.createFile(segment + ".frq");
+  prox = directory.createFile(segment + ".prx");
+  tis = new TermInfosWriter(directory, segment, fieldInfos);
+
+  for (int i = 0; i < postings.length; i++) {
+    Posting posting = postings[i];
+
+    // add an entry to the dictionary with
+    // pointers to prox and freq files.
+    TermInfo ti;
+    ti.set(1, freq.getFilePointer(), prox.getFilePointer());
+    tis.add(posting.term, ti); /* append ".tii" or ".tis" files */
+
+    // add an entry to the freq file
+    int f = posting.freq;
+    if (f == 1) // optimize freq=1
+      freq.writeVInt(1); // set low bit of doc num.
+    else {
+      freq.writeVInt(0); // the document number
+      freq.writeVInt(f); // frequency in doc
+    }
+
+    // add an entry to positions file
+    int lastPosition = 0;
+    int[] positions = posting.positions;
+    for (int j = 0; j < f; j++) { // use delta-encoding
+      int position = positions[j];
+      prox.writeVInt(position - lastPosition);
+      lastPosition = position;
+    }
+  }
+}
+
+DocumentWriter::writeNorms(Document doc, String segment) {
+  // calculate TF-IDF Norm?
+  for field in doc.fields() {
+    if (field.isIndexed()) {
+      int fieldNumber = fieldInfos.fieldNumber(field.name());
+      OutputStream norm =
+        directory.createFile(segment + ".f" + fieldNumber);
+      norm.writeByte(1 / sqrt(fieldLengths[fieldNumber]));
+    }
+  }
+}
+[/code]
