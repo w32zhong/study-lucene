@@ -30,14 +30,16 @@ $ docker run -it \
 
 4. Build and run Lucene demo
 In Docker environment,
-```
+```sh
 $ export PATH=$PATH:${ANT_HOME}/bin
 $ cd /lucene
 $ rm -rf build index
 $ ant jar-core jar-demo
 $ export CLASSPATH=`pwd`/build
 $ (cd $CLASSPATH && find -name '*.jar' -exec jar -xf {} \;)
-$ java org.apache.lucene.demo.IndexFiles
+```
+Now, let's run the Lucene demo
+```sh
 $ java org.apache.lucene.demo.IndexFiles ./src/java/
 $ java org.apache.lucene.demo.SearchFiles
 ```
