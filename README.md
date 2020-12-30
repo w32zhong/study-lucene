@@ -2,7 +2,7 @@
 This repo shows how to successfully build and run Lucene versions from `v1.9` to later than `v3.4`.
 The purpose of this repo is to let myself get hand dirty when learning Lucene source code.
 
-### Setup
+### Setup (use `v1.9` as example)
 1. Clone lucene-solr:
 ```sh
 $ git clone https://gitee.com/t-k-/lucene-solr.git
