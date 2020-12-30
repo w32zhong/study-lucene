@@ -2,7 +2,7 @@
 This repo shows how to successfully build and run Lucene versions from `v1.9` to later than `v3.4`.
 The purpose of this repo is to let myself get hand dirty when learning Lucene source code.
 
-### Setup (use `v1.9` as example)
+### Setup (Use `v1.9` as Example)
 1. Clone lucene-solr:
 ```sh
 $ git clone https://gitee.com/t-k-/lucene-solr.git
@@ -42,4 +42,20 @@ Now, let's run the Lucene demo
 ```sh
 $ java org.apache.lucene.demo.IndexFiles ./src/java/
 $ java org.apache.lucene.demo.SearchFiles
+```
+
+### Build and Run on Docker
+```sh
+$ sudo docker build -t study-lucene .
+$ sudo docker run -it study-lucene java org.apache.lucene.demo.SearchFiles
+```
+
+You may want to attach live source code and build in container:
+```sh
+$ sudo docker run -it -v `pwd`/src/lucene-solr:/code/lucene study-lucene bash
+```
+
+Index a large corpus from container?
+```sh
+$ sudo docker run -it -v /home/tk/nvme0n1/corpus:/corpus study-lucene java org.apache.lucene.demo.IndexFiles /corpus
 ```
