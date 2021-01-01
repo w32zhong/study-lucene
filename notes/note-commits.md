@@ -1,4 +1,7 @@
 ## Important Commits
+* 6f8347c6fef2877bba40fe328392e32c6d76d27d SkipList for Conjunctive BooleanQuerys
+* c03491e6a2c8c349e12a0f27438475f5bde07c19 Distinguish between positions and length
+* bd2acf0bf8ecc7aeea983e5b0630ecf798d84baf Added IndexReader.setNorm() to permit altering boosts after an index is created
 * dc4da65595d2a482ced4e3bf700cede33e7e01e1 Fix for deadlock between indexing thread and parsing
 * f0d57d81a37d62083b86cce316b0b780f7a46e1b Introduce class FilterIndexReader
 * 186a1113cc9d399c4468cedc94dd5531cac4ce41 StandardTokenzier with CJK support
